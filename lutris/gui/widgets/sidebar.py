@@ -133,7 +133,7 @@ class SidebarRow(Gtk.ListBoxRow):
             child = next_child
         for icon_name, text, clicked, key in self.get_actions():
             icon_name = pick_stock_icon(icon_name, fallback_name="preferences-system-symbolic")
-            btn = Gtk.Button(tooltip_text=text, visible=True, has_frame=False)
+            btn = Gtk.Button(tooltip_text=text, has_frame=False)
             btn.add_css_class("sidebar-btn")
             image = Gtk.Image.new_from_icon_name(icon_name)
             image.set_pixel_size(16)
