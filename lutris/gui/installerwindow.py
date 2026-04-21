@@ -5,7 +5,6 @@ import os
 import traceback
 from gettext import gettext as _
 
-import yaml
 from gi.repository import Gdk, Gio, GLib, Gtk
 
 from lutris import settings
@@ -77,7 +76,6 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
         self.interpreter = None
         self.installation_kind = installation_kind
         self.continue_handler = None
-        self._script_save_checkboxes = {}
 
         self.accelerators = Gtk.AccelGroup()
         self.add_accel_group(self.accelerators)
@@ -157,7 +155,6 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
         self.installer_files_box = InstallerFilesBox()
         self.installer_files_box.connect("files-available", self.on_files_available)
         self.installer_files_box.connect("files-ready", self.on_files_ready)
-        self._script_checkboxes_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, no_show_all=True)
 
         self.log_buffer = Gtk.TextBuffer()
         self.error_details_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, no_show_all=True)
@@ -391,13 +388,6 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
 
     def report_finished(self, game_id, status):
         GLib.idle_add(self.load_finish_install_page, game_id, gtk_safe(status))
-
-    def _community_scripts_for_runner(self, runner):
-        """Return Lutris API community scripts matching runner, excluding auto-generated ones.
-
-        Used in Download mode to offer optional script saves alongside offline installers.
-        """
-        return [s for s in self.installers if s.get("runner") == runner and not s.get("_generated")]
 
     # Choose Installer Page
     #
@@ -756,17 +746,13 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
         self.stack.navigate_to_page(self.present_installer_files_page)
 
     def create_installer_files_page(self):
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0, visible=True)
-        scrolled = Gtk.ScrolledWindow(
+        return Gtk.ScrolledWindow(
             hexpand=True,
             vexpand=True,
             child=self.installer_files_box,
             visible=True,
             shadow_type=Gtk.ShadowType.ETCHED_IN,
         )
-        outer.pack_start(scrolled, True, True, 0)
-        outer.pack_start(self._script_checkboxes_box, False, False, 6)
-        return outer
 
     def present_installer_files_page(self):
         """Show installer screen with the file picker / downloader"""
@@ -777,52 +763,6 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
             self.set_status(_("Please review the files needed for the installation then click 'Install'"))
         self.stack.present_page("installer_files")
         self.display_install_button(self.on_files_confirmed, sensitive=self.installer_files_box.is_ready)
-        self._script_save_checkboxes = {}
-        self._script_checkboxes_box.hide()
-        if (
-            self.installation_kind == InstallationKind.DOWNLOAD
-            and self.interpreter
-            and "offline installer" in (self.interpreter.installer.version or "").lower()
-        ):
-            runner = self.interpreter.installer.runner
-            community = self._community_scripts_for_runner(runner)
-            if community:
-                self._inject_script_save_checkboxes(community)
-
-    def _inject_script_save_checkboxes(self, community_scripts):
-        """Populate the script-save checkboxes section below the installer files list.
-
-        Only shown in Download mode when offline installer + community scripts coexist.
-        Checked scripts are saved as YAML to INSTALLER_CACHE_DIR after download completes.
-        """
-        for child in self._script_checkboxes_box.get_children():
-            child.destroy()
-
-        label = Gtk.Label(
-            label=_("<b>Save installer scripts for offline use:</b>"),
-            use_markup=True,
-            xalign=0,
-            visible=True,
-        )
-        self._script_checkboxes_box.pack_start(label, False, False, 0)
-
-        self._script_save_checkboxes = {}
-        seen_labels = set()
-        for script in community_scripts:
-            version = script.get("version") or script.get("slug", "")
-            runner = script.get("runner", "")
-            cb_label = "%s (%s)" % (version, runner) if runner else version
-            if cb_label in seen_labels:
-                cb_label = "%s — %s" % (cb_label, script.get("slug", ""))
-            seen_labels.add(cb_label)
-            description = script.get("description", "").strip() or script.get("notes", "").strip()
-            cb = Gtk.CheckButton(label=cb_label, active=True, visible=True)
-            if description:
-                cb.set_tooltip_text(description)
-            self._script_save_checkboxes[script["slug"]] = (cb, script)
-            self._script_checkboxes_box.pack_start(cb, False, False, 0)
-
-        self._script_checkboxes_box.show()
 
     def present_downloading_files_page(self):
         def on_exit_page():
@@ -855,24 +795,10 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
         # on_files_confirmed(), since they can race when no actual
         # download is required.
         if self.installation_kind == InstallationKind.DOWNLOAD:
-            self._save_checked_scripts()
             GLib.idle_add(self.load_finish_install_page, None, gtk_safe(_("Game files downloaded successfully")))
         else:
             GLib.idle_add(self.launch_installer_commands)
 
-    def _save_checked_scripts(self):
-        """Save any checked community scripts to INSTALLER_CACHE_DIR as YAML files."""
-        for slug, (checkbox, script) in getattr(self, "_script_save_checkboxes", {}).items():
-            if not checkbox.get_active():
-                continue
-            os.makedirs(settings.INSTALLER_CACHE_DIR, exist_ok=True)
-            script_path = os.path.join(settings.INSTALLER_CACHE_DIR, "%s.yaml" % slug)
-            try:
-                with open(script_path, "w", encoding="utf-8") as f:
-                    yaml.dump(script, f, default_flow_style=False, allow_unicode=True)
-                logger.info("Saved installer script to %s", script_path)
-            except OSError as ex:
-                logger.warning("Failed to save installer script %s: %s", script_path, ex)
 
     def launch_installer_commands(self):
         logger.info("Launching installer commands")
