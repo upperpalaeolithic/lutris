@@ -808,7 +808,10 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
 
         self._script_save_checkboxes = {}
         for script in community_scripts:
-            cb = Gtk.CheckButton(label=script.get("version", script.get("slug", "")), active=True, visible=True)
+            version = script.get("version") or script.get("slug", "")
+            runner = script.get("runner", "")
+            cb_label = "%s (%s)" % (version, runner) if runner else version
+            cb = Gtk.CheckButton(label=cb_label, active=True, visible=True)
             self._script_save_checkboxes[script["slug"]] = (cb, script)
             self._script_checkboxes_box.pack_start(cb, False, False, 0)
 
