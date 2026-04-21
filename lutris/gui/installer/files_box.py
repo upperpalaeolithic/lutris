@@ -82,6 +82,13 @@ class InstallerFilesBox(Gtk.ListBox):
         """Return True if all files are ready to be fetched"""
         return len(self.ready_files) == len(self.installer.files)
 
+    @property
+    def is_all_cached(self):
+        """Return True if all files are already present in the cache (provider is 'pga')"""
+        if not self.installer_files_boxes:
+            return False
+        return all(box.provider == "pga" for box in self.installer_files_boxes.values())
+
     def check_files_ready(self):
         """Checks if all installer files are ready and emit a signal if so"""
         self.emit("files-ready", self.is_ready)

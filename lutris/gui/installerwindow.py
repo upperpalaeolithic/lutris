@@ -745,8 +745,8 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
         logger.debug("Game files prepared.")
         self.installer_files_box.load_installer(self.interpreter.installer)
 
-        if self.installation_kind == InstallationKind.DOWNLOAD and self.installer_files_box.is_ready:
-            logger.debug("All files already present, skipping download")
+        if self.installation_kind == InstallationKind.DOWNLOAD and self.installer_files_box.is_all_cached:
+            logger.debug("All files already present in cache, skipping download")
             GLib.idle_add(
                 self.load_finish_install_page, None, gtk_safe(_("Game files already downloaded"))
             )
