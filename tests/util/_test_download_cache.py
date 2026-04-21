@@ -256,6 +256,87 @@ class TestSafeDeleteFolder:
         assert not os.path.exists(no_lock)
 
 
+class TestTmpFilePreservation:
+    """Test that .tmp and .tmp.progress files are preserved when their destination is protected."""
+
+    def test_tmp_preserved_when_dest_locked(self, temp_dir):
+        """A .tmp partial file is kept when the target dest file is DOWNLOADING."""
+        dest = os.path.join(temp_dir, "game.bin")
+        tmp = dest + ".tmp"
+        with open(tmp, "w") as f:
+            f.write("partial data")
+        create_cache_lock(dest, CacheState.DOWNLOADING)
+
+        result = safe_delete_folder(temp_dir)
+        assert result is False
+        assert os.path.exists(tmp)
+
+    def test_tmp_progress_preserved_when_dest_locked(self, temp_dir):
+        """A .tmp.progress file is kept when the target dest file is DOWNLOADING."""
+        dest = os.path.join(temp_dir, "game.bin")
+        tmp_progress = dest + ".tmp.progress"
+        with open(tmp_progress, "w") as f:
+            f.write("{}")
+        create_cache_lock(dest, CacheState.DOWNLOADING)
+
+        result = safe_delete_folder(temp_dir)
+        assert result is False
+        assert os.path.exists(tmp_progress)
+
+    def test_tmp_deleted_when_dest_unlocked(self, temp_dir):
+        """A .tmp partial file is deleted when the target dest is safe to delete."""
+        dest = os.path.join(temp_dir, "game.bin")
+        tmp = dest + ".tmp"
+        with open(tmp, "w") as f:
+            f.write("partial data")
+        # No lock for dest — safe to delete
+
+        result = safe_delete_folder(temp_dir)
+        assert result is True
+        assert not os.path.exists(tmp)
+
+    def test_tmp_deleted_when_dest_installed(self, temp_dir):
+        """A .tmp partial file is deleted when the target dest is INSTALLED."""
+        dest = os.path.join(temp_dir, "game.bin")
+        with open(dest, "w") as f:
+            f.write("installed data")
+        tmp = dest + ".tmp"
+        with open(tmp, "w") as f:
+            f.write("stale partial")
+        create_cache_lock(dest, CacheState.INSTALLED)
+
+        result = safe_delete_folder(temp_dir)
+        assert result is True
+        assert not os.path.exists(tmp)
+
+    def test_tmp_preserved_when_dest_downloaded(self, temp_dir):
+        """A .tmp partial file is kept when the target dest is DOWNLOADED (not installed yet)."""
+        dest = os.path.join(temp_dir, "game.bin")
+        tmp = dest + ".tmp"
+        with open(tmp, "w") as f:
+            f.write("partial data")
+        create_cache_lock(dest, CacheState.DOWNLOADED)
+
+        result = safe_delete_folder(temp_dir)
+        assert result is False
+        assert os.path.exists(tmp)
+
+    def test_tmp_and_tmp_progress_both_preserved(self, temp_dir):
+        """Both .tmp and .tmp.progress are preserved together when dest is locked."""
+        dest = os.path.join(temp_dir, "game.bin")
+        tmp = dest + ".tmp"
+        tmp_progress = dest + ".tmp.progress"
+        for f_path in (tmp, tmp_progress):
+            with open(f_path, "w") as f:
+                f.write("data")
+        create_cache_lock(dest, CacheState.DOWNLOADING)
+
+        result = safe_delete_folder(temp_dir)
+        assert result is False
+        assert os.path.exists(tmp)
+        assert os.path.exists(tmp_progress)
+
+
 class TestDownloaderChunkSize:
     """Test that the Downloader uses the new chunk size."""
 
