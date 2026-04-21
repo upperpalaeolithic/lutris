@@ -9,17 +9,19 @@ from lutris.util.strings import gtk_safe, gtk_safe_urls
 class InstallerScriptBox(Gtk.VBox):
     """Box displaying the details of a script, with associated action buttons"""
 
-    def __init__(self, script, parent=None, revealed=False, action_label=None):
+    def __init__(self, script, parent=None, revealed=False, action_label=None, use_checkbox=False):
         super().__init__()
         self.script = script
         self.parent = parent
         self.revealer = None
+        self.use_checkbox = use_checkbox
         self.action_label = action_label or _("Install")
+        self._checkbox = None
         self.set_margin_left(12)
         self.set_margin_right(12)
         box = Gtk.Box(spacing=12, margin_top=6, margin_bottom=6)
         box.pack_start(self.get_infobox(), True, True, 0)
-        box.add(self.get_install_button())
+        box.add(self.get_checkbox() if use_checkbox else self.get_install_button())
         self.add(box)
         self.add(self.get_revealer(revealed))
 
@@ -54,6 +56,21 @@ class InstallerScriptBox(Gtk.VBox):
         self.revealer.add(box)
         self.revealer.set_reveal_child(revealed)
         return self.revealer
+
+    def get_checkbox(self):
+        """Return a selection checkbox for download mode (checked by default)"""
+        align = Gtk.Alignment()
+        align.set(0.5, 0.5, 0, 0)
+        self._checkbox = Gtk.CheckButton(active=True)
+        align.add(self._checkbox)
+        return align
+
+    @property
+    def is_selected(self):
+        """True if this installer is selected for download (always True in button mode)"""
+        if self.use_checkbox and self._checkbox:
+            return self._checkbox.get_active()
+        return True
 
     def get_install_button(self):
         """Return the install button widget"""

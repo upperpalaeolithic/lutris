@@ -8,11 +8,15 @@ class InstallerPicker(Gtk.ListBox):
 
     __gsignals__ = {"installer-selected": (GObject.SIGNAL_RUN_FIRST, None, (str,))}
 
-    def __init__(self, scripts, action_label=None):
+    def __init__(self, scripts, action_label=None, use_checkbox=False):
         super().__init__()
+        self.use_checkbox = use_checkbox
         revealed = True
         for script in scripts:
-            self.add(InstallerScriptBox(script, parent=self, revealed=revealed, action_label=action_label))
+            self.add(InstallerScriptBox(
+                script, parent=self, revealed=revealed,
+                action_label=action_label, use_checkbox=use_checkbox,
+            ))
             revealed = False  # Only reveal the first installer.
         self.connect("row-selected", self.on_activate)
         self.show_all()
@@ -27,6 +31,17 @@ class InstallerPicker(Gtk.ListBox):
         else:
             self.set_filter_func(lambda row: row.get_children()[0].script.get("runner") == runner)
         self.invalidate_filter()
+
+    def get_selected_scripts(self):
+        """Return scripts whose checkboxes are checked (download mode only)."""
+        selected = []
+        for row in self.get_children():
+            children = row.get_children()
+            if children and isinstance(children[0], InstallerScriptBox):
+                box = children[0]
+                if box.is_selected:
+                    selected.append(box.script)
+        return selected
 
     @staticmethod
     def on_activate(widget, row):

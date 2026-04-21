@@ -76,6 +76,8 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
         self.interpreter = None
         self.installation_kind = installation_kind
         self.continue_handler = None
+        self._download_queue = []
+        self.installer_picker = None
 
         self.accelerators = Gtk.AccelGroup()
         self.add_accel_group(self.accelerators)
@@ -410,27 +412,32 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
         return "linux" if "linux" in runners else None
 
     def create_choose_installer_page(self):
-        action_label = _("Download") if self.installation_kind == InstallationKind.DOWNLOAD else None
-        installer_picker = InstallerPicker(self.installers, action_label=action_label)
-        installer_picker.connect("installer-selected", self.on_installer_selected)
+        is_download = self.installation_kind == InstallationKind.DOWNLOAD
+        self.installer_picker = InstallerPicker(
+            self.installers,
+            action_label=None,
+            use_checkbox=is_download,
+        )
+        if not is_download:
+            self.installer_picker.connect("installer-selected", self.on_installer_selected)
 
         preferred = self._preferred_runner(self.installers)
         if preferred:
-            installer_picker.set_platform_filter(preferred)
+            self.installer_picker.set_platform_filter(preferred)
 
             toggle = Gtk.ToggleButton(label=_("Show all platforms"), active=False)
 
             def on_toggle(btn):
-                installer_picker.set_platform_filter(None if btn.get_active() else preferred)
+                self.installer_picker.set_platform_filter(None if btn.get_active() else preferred)
 
             toggle.connect("toggled", on_toggle)
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
             box.pack_start(toggle, False, False, 0)
-            box.pack_start(installer_picker, True, True, 0)
+            box.pack_start(self.installer_picker, True, True, 0)
             return Gtk.ScrolledWindow(hexpand=True, vexpand=True, child=box, shadow_type=Gtk.ShadowType.ETCHED_IN)
 
         return Gtk.ScrolledWindow(
-            hexpand=True, vexpand=True, child=installer_picker, shadow_type=Gtk.ShadowType.ETCHED_IN
+            hexpand=True, vexpand=True, child=self.installer_picker, shadow_type=Gtk.ShadowType.ETCHED_IN
         )
 
     def present_choose_installer_page(self):
@@ -440,10 +447,43 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
         name = self.installers[0]["name"]
         if self.installation_kind == InstallationKind.DOWNLOAD:
             self.set_title(_("Download %s") % name)
+            self.stack.present_page("choose_installer")
+            self.display_continue_button(
+                self.on_download_selected_clicked,
+                continue_button_label=_("_Download selected"),
+                extra_buttons=[self.cache_button],
+            )
         else:
             self.set_title(_("Install %s") % name)
-        self.stack.present_page("choose_installer")
-        self.display_cancel_button(extra_buttons=[self.cache_button])
+            self.stack.present_page("choose_installer")
+            self.display_cancel_button(extra_buttons=[self.cache_button])
+
+    def on_download_selected_clicked(self, _button):
+        """Start downloading all checked installers in sequence."""
+        selected = self.installer_picker.get_selected_scripts() if self.installer_picker else []
+        if not selected:
+            return
+        self._download_queue = list(selected)
+        self._start_next_download()
+
+    def _start_next_download(self):
+        """Set up the interpreter for the next queued installer and begin its download."""
+        script = self._download_queue.pop(0)
+        try:
+            self.interpreter = interpreter.ScriptInterpreter(script, self)
+            self.interpreter.connect("runners-installed", self.on_runners_ready)
+        except MissingGameDependencyError:
+            self._advance_download_queue()
+            return
+        self.set_title(_("Downloading {}").format(self.interpreter.installer.game_name))
+        self.load_destination_page()
+
+    def _advance_download_queue(self):
+        """Move to the next queued download, or show the finish page when all are done."""
+        if self._download_queue:
+            self._start_next_download()
+        else:
+            self.load_finish_install_page(None, gtk_safe(_("All selected game files downloaded")))
 
     def on_installer_selected(self, _widget, installer_version):
         """Sets the script interpreter to the correct script then proceed to
@@ -726,9 +766,7 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
         if not self.interpreter.installer.files:
             logger.debug("Installer doesn't require files")
             if self.installation_kind == InstallationKind.DOWNLOAD:
-                GLib.idle_add(
-                    self.load_finish_install_page, None, gtk_safe(_("Game files already downloaded"))
-                )
+                GLib.idle_add(self._advance_download_queue)
             else:
                 self.launch_installer_commands()
             return
@@ -738,9 +776,7 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
 
         if self.installation_kind == InstallationKind.DOWNLOAD and self.installer_files_box.is_all_cached:
             logger.debug("All files already present in cache, skipping download")
-            GLib.idle_add(
-                self.load_finish_install_page, None, gtk_safe(_("Game files already downloaded"))
-            )
+            GLib.idle_add(self._advance_download_queue)
             return
 
         self.stack.navigate_to_page(self.present_installer_files_page)
@@ -795,7 +831,7 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
         # on_files_confirmed(), since they can race when no actual
         # download is required.
         if self.installation_kind == InstallationKind.DOWNLOAD:
-            GLib.idle_add(self.load_finish_install_page, None, gtk_safe(_("Game files downloaded successfully")))
+            GLib.idle_add(self._advance_download_queue)
         else:
             GLib.idle_add(self.launch_installer_commands)
 
@@ -1095,18 +1131,12 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
         self.set_status(status)
         self.stack.present_page("nothing")
         if self.installation_kind == InstallationKind.DOWNLOAD:
-            download_another_button = Gtk.Button(_("Download _another variant"), use_underline=True, visible=True)
-            download_another_button.connect("clicked", self.on_download_another_clicked)
-            self.display_cancel_button(extra_buttons=[download_another_button])
+            self.display_cancel_button()
         else:
             self.display_continue_button(
                 self.on_launch_clicked, continue_button_label=_("_Launch"), suggested_action=False
             )
 
-    def on_download_another_clicked(self, _button):
-        """Return to the installer picker to download a different variant."""
-        self.install_complete = False
-        self.stack.navigate_to_page(self.present_choose_installer_page)
 
     def on_launch_clicked(self, button):
         """Launch a game after it's been installed."""
