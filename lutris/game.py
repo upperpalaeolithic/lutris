@@ -419,6 +419,26 @@ class Game:
             game.game_error.register(on_error)
             game.launch(launch_ui_delegate)
 
+    def download(self, launch_ui_delegate: "LaunchUIDelegate") -> None:
+        """Download game files without executing installer commands."""
+        if not self.slug:
+            raise ValueError("Invalid game passed: %s" % self)
+
+        if not self.service or self.service == "lutris":
+            application: "LutrisApplication" = Gio.Application.get_default()
+            application.show_lutris_installer_window(game_slug=self.slug, installation_kind=InstallationKind.DOWNLOAD)
+            return
+
+        service = launch_ui_delegate.get_service(self.service)
+        db_game = service.get_service_db_game(self)
+        if not db_game:
+            logger.error("Can't find %s for %s, trying to fall back to Lutris installers", self.name, service.name)
+            application: "LutrisApplication" = Gio.Application.get_default()
+            application.show_lutris_installer_window(game_slug=self.slug, installation_kind=InstallationKind.DOWNLOAD)
+            return
+
+        service.download(db_game)
+
     def install_updates(self, install_ui_delegate: "LaunchUIDelegate") -> bool:
         service = install_ui_delegate.get_service(self.service)
         db_game = games_db.get_game_by_field(self.id, "id")

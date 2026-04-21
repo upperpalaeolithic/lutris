@@ -431,7 +431,11 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
         """Stage where we choose an install script."""
         self.interpreter = None
         self.set_status("")
-        self.set_title(_("Install %s") % self.installers[0]["name"])
+        name = self.installers[0]["name"]
+        if self.installation_kind == InstallationKind.DOWNLOAD:
+            self.set_title(_("Download %s") % name)
+        else:
+            self.set_title(_("Install %s") % name)
         self.stack.present_page("choose_installer")
         self.display_cancel_button(extra_buttons=[self.cache_button])
 
@@ -761,7 +765,10 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
         # Idle-add here to ensure that the launch occurs after
         # on_files_confirmed(), since they can race when no actual
         # download is required.
-        GLib.idle_add(self.launch_installer_commands)
+        if self.installation_kind == InstallationKind.DOWNLOAD:
+            GLib.idle_add(self.load_finish_install_page, None, gtk_safe(_("Game files downloaded successfully")))
+        else:
+            GLib.idle_add(self.launch_installer_commands)
 
     def launch_installer_commands(self):
         logger.info("Launching installer commands")
@@ -1057,7 +1064,12 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
     def present_finished_page(self, game_id, status):
         self.set_status(status)
         self.stack.present_page("nothing")
-        self.display_continue_button(self.on_launch_clicked, continue_button_label=_("_Launch"), suggested_action=False)
+        if self.installation_kind == InstallationKind.DOWNLOAD:
+            self.display_cancel_button()
+        else:
+            self.display_continue_button(
+                self.on_launch_clicked, continue_button_label=_("_Launch"), suggested_action=False
+            )
 
     def on_launch_clicked(self, button):
         """Launch a game after it's been installed."""

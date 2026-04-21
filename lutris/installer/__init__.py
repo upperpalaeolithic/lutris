@@ -44,6 +44,7 @@ class InstallationKind(enum.Enum):
     INSTALL = 0
     UPDATE = 1
     DLC = 2
+    DOWNLOAD = 3
 
 
 def read_script(filename):

@@ -423,12 +423,14 @@ class LutrisApplication(Gtk.Application):
             InstallerWindow, installers=installers, service=service, appid=appid, installation_kind=installation_kind
         )
 
-    def show_lutris_installer_window(self, game_slug: str) -> None:
+    def show_lutris_installer_window(
+        self, game_slug: str, installation_kind: InstallationKind = InstallationKind.INSTALL
+    ) -> None:
         def on_installers_ready(installers: list[dict[str, Any]], error: BaseException) -> None:
             if error and self.window:
                 display_error(error, parent=self.window)
             elif installers:
-                self.show_installer_window(installers)
+                self.show_installer_window(installers, installation_kind=installation_kind)
             else:
                 ErrorDialog(_("No installer available."), parent=self.window)
 
