@@ -9,11 +9,12 @@ from lutris.util.strings import gtk_safe, gtk_safe_urls
 class InstallerScriptBox(Gtk.VBox):
     """Box displaying the details of a script, with associated action buttons"""
 
-    def __init__(self, script, parent=None, revealed=False):
+    def __init__(self, script, parent=None, revealed=False, action_label=None):
         super().__init__()
         self.script = script
         self.parent = parent
         self.revealer = None
+        self.action_label = action_label or _("Install")
         self.set_margin_left(12)
         self.set_margin_right(12)
         box = Gtk.Box(spacing=12, margin_top=6, margin_bottom=6)
@@ -59,7 +60,7 @@ class InstallerScriptBox(Gtk.VBox):
         align = Gtk.Alignment()
         align.set(0, 0, 0, 0)
 
-        install_button = Gtk.Button(_("Install"))
+        install_button = Gtk.Button(self.action_label)
         install_button.connect("clicked", self.on_install_clicked)
         style_context = install_button.get_style_context()
         style_context.add_class("suggested-action")
