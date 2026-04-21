@@ -531,6 +531,7 @@ class ServiceGameActions(GameActions):
     def get_game_actions(self) -> list[tuple[str | None, str, Callable[..., None] | None]]:
         return [
             ("install", _("Install"), self.on_install_clicked),
+            ("download", _("Download"), self.on_download_clicked),
             ("add", _("Locate installed game"), self.on_locate_installed_game),
             ("view", _("View on Lutris.net"), self.on_view_game),
             ("view-store", _("View on store page"), self.on_view_store),
@@ -540,6 +541,7 @@ class ServiceGameActions(GameActions):
         """Return a dictionary of actions that should be shown for a game"""
         return {
             "install": self.is_installable,
+            "download": self.is_installable,
             "add": self.is_installable,
             "view": True,
             "view-store": bool(self.game.service and self._get_store_url(self.game)),

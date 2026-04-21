@@ -8,11 +8,11 @@ class InstallerPicker(Gtk.ListBox):
 
     __gsignals__ = {"installer-selected": (GObject.SIGNAL_RUN_FIRST, None, (str,))}
 
-    def __init__(self, scripts):
+    def __init__(self, scripts, action_label=None):
         super().__init__()
         revealed = True
         for script in scripts:
-            self.add(InstallerScriptBox(script, parent=self, revealed=revealed))
+            self.add(InstallerScriptBox(script, parent=self, revealed=revealed, action_label=action_label))
             revealed = False  # Only reveal the first installer.
         self.connect("row-selected", self.on_activate)
         self.show_all()

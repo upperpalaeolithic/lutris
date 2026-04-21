@@ -414,7 +414,8 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
         return "linux" if "linux" in runners else None
 
     def create_choose_installer_page(self):
-        installer_picker = InstallerPicker(self.installers)
+        action_label = _("Download") if self.installation_kind == InstallationKind.DOWNLOAD else None
+        installer_picker = InstallerPicker(self.installers, action_label=action_label)
         installer_picker.connect("installer-selected", self.on_installer_selected)
 
         preferred = self._preferred_runner(self.installers)
@@ -740,7 +741,10 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
     def present_installer_files_page(self):
         """Show installer screen with the file picker / downloader"""
         logger.debug("Presenting installer files page")
-        self.set_status(_("Please review the files needed for the installation then click 'Install'"))
+        if self.installation_kind == InstallationKind.DOWNLOAD:
+            self.set_status(_("Please review the files needed for the download then click 'Download'"))
+        else:
+            self.set_status(_("Please review the files needed for the installation then click 'Install'"))
         self.stack.present_page("installer_files")
         self.display_install_button(self.on_files_confirmed, sensitive=self.installer_files_box.is_ready)
         self._script_save_checkboxes = {}
@@ -1202,9 +1206,13 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
         self.display_buttons(buttons)
 
     def display_install_button(self, handler, sensitive=True):
-        """Displays the continue button, but labels it 'Install'."""
+        """Displays the continue button, labelled 'Download' or 'Install' based on installation kind."""
+        if self.installation_kind == InstallationKind.DOWNLOAD:
+            label = _("_Download")
+        else:
+            label = _("_Install")
         self.display_continue_button(
-            handler, continue_button_label=_("_Install"), sensitive=sensitive, extra_buttons=[self.source_button]
+            handler, continue_button_label=label, sensitive=sensitive, extra_buttons=[self.source_button]
         )
 
     def display_cancel_button(self, extra_buttons=None):
