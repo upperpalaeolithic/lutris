@@ -125,8 +125,43 @@ class DownloadProgress:
         if pair not in completed:
             completed.append(pair)
             self._data["completed_ranges"] = completed
-            self._data["updated_at"] = time.time()
-            self._save()
+        # Clear any partial checkpoint now that this range is fully done
+        key = "%d-%d" % (start, end)
+        self._data.get("partial_ranges", {}).pop(key, None)
+        self._data["updated_at"] = time.time()
+        self._save()
+
+    def mark_range_progress(self, start: int, end: int, bytes_written: int) -> None:
+        """Checkpoint how many bytes have been sequentially written for a range.
+
+        Called periodically by the writer thread so that a mid-range failure
+        can be resumed from the last checkpoint rather than the range start.
+
+        Args:
+            start: Inclusive start byte offset of the range.
+            end: Inclusive end byte offset of the range.
+            bytes_written: Number of bytes written sequentially from ``start``.
+        """
+        key = "%d-%d" % (start, end)
+        partial = self._data.setdefault("partial_ranges", {})
+        if bytes_written > 0:
+            partial[key] = bytes_written
+        else:
+            partial.pop(key, None)
+        self._data["updated_at"] = time.time()
+        self._save()
+
+    def get_range_progress(self, start: int, end: int) -> int:
+        """Return bytes already written sequentially from ``start`` for a range.
+
+        Returns 0 if no checkpoint exists for this range.
+        """
+        key = "%d-%d" % (start, end)
+        return self._data.get("partial_ranges", {}).get(key, 0)
+
+    def get_partial_size(self) -> int:
+        """Total checkpointed bytes across all in-progress (partial) ranges."""
+        return sum(v for v in self._data.get("partial_ranges", {}).values() if isinstance(v, (int, float)))
 
     # ------------------------------------------------------------------
     # Query helpers
@@ -226,7 +261,7 @@ class DownloadProgress:
                 except OSError:
                     pass
                 raise
-        except OSError as ex:
+        except Exception as ex:
             logger.warning(
                 "Failed to save progress file %s: %s",
                 self.progress_path,

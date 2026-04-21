@@ -216,6 +216,20 @@ def safe_delete_folder(folder_path: str) -> bool:
             if file_path.endswith(".cache_lock"):
                 continue
 
+            # .tmp and .tmp.progress are download-in-progress files for dest_file.
+            # Preserve them whenever the corresponding dest_file would be preserved
+            # so that a download interrupted mid-session can be resumed on restart.
+            if file_path.endswith(".tmp.progress"):
+                dest_file_path = file_path[: -len(".tmp.progress")]
+                if not is_safe_to_delete(dest_file_path):
+                    preserved_files.append(file_path)
+                    continue
+            elif file_path.endswith(".tmp"):
+                dest_file_path = file_path[:-4]
+                if not is_safe_to_delete(dest_file_path):
+                    preserved_files.append(file_path)
+                    continue
+
             if is_safe_to_delete(file_path):
                 try:
                     os.remove(file_path)

@@ -179,15 +179,24 @@ class GOGDownloader(Downloader):
             ranges.append((start, end))
         return ranges
 
+    # Checkpoint partial range progress every 64 MB of writes per range.
+    # This caps the worst-case re-download after an interrupted range to 64 MB.
+    _PARTIAL_CHECKPOINT_INTERVAL = 64 * 1024 * 1024  # 64 MB
+
     def _writer_loop(self) -> None:
         """Dedicated writer thread: dequeues chunks and writes to disk.
 
-        Consumes (offset, data, range_start, range_end) tuples from the
-        write queue. A None sentinel signals the writer to exit.
+        Consumes (offset, data, range_start, range_end, is_last) tuples from
+        the write queue. A None sentinel signals the writer to exit.
 
         All disk I/O and progress tracking happens here, keeping download
         workers free from disk latency.
         """
+        # Last checkpointed byte count per range key (range_start, range_end).
+        # Position-based: tracks bytes correctly even when a worker retries
+        # and re-downloads from range_start.
+        _range_last_saved: dict[tuple[int, int], int] = {}
+
         try:
             with open(self.dest, "r+b") as f:
                 while True:
@@ -203,17 +212,59 @@ class GOGDownloader(Downloader):
                         # Sentinel — all downloads complete
                         break
 
-                    offset, data, range_start, range_end = item
+                    offset, data, range_start, range_end, is_last = item
                     f.seek(offset)
                     f.write(data)
                     with self._download_lock:
                         self.downloaded_size += len(data)
                     self.progress_event.set()
 
-                    # If this write completes a range, mark it in progress file
-                    if range_end is not None and offset + len(data) >= range_end + 1:
+                    # Position-based byte tracking: bytes correctly on disk from range_start.
+                    # offset + len(data) - range_start gives actual disk position, which
+                    # resets naturally when a worker retries and starts over from range_start.
+                    rk = (range_start, range_end)
+                    written = offset + len(data) - range_start
+
+                    if rk not in _range_last_saved:
+                        # First chunk: seed from current offset so we don't immediately
+                        # re-checkpoint bytes already recorded in a prior session.
+                        _range_last_saved[rk] = offset - range_start
+                    elif offset - range_start < _range_last_saved[rk]:
+                        # Worker retried from range_start; its offset is BEHIND our last
+                        # checkpoint. The previously saved checkpoint is now stale — clear it
+                        # so a future resume doesn't skip past data that isn't on disk yet.
                         if self._progress:
-                            self._progress.mark_range_complete(range_start, range_end)
+                            try:
+                                self._progress.mark_range_progress(range_start, range_end, 0)
+                            except Exception as ex:
+                                logger.warning(
+                                    "Failed to reset stale checkpoint for %d-%d: %s", range_start, range_end, ex
+                                )
+                        _range_last_saved[rk] = 0
+
+                    # If this write completes a range, mark it in progress file
+                    if is_last:
+                        if self._progress:
+                            try:
+                                self._progress.mark_range_complete(range_start, range_end)
+                            except Exception as ex:
+                                logger.warning("Failed to mark range %d-%d complete: %s", range_start, range_end, ex)
+                        _range_last_saved.pop(rk, None)
+                    elif self._progress:
+                        # Checkpoint partial progress every _PARTIAL_CHECKPOINT_INTERVAL bytes
+                        last_saved = _range_last_saved.get(rk, 0)
+                        if written - last_saved >= self._PARTIAL_CHECKPOINT_INTERVAL:
+                            try:
+                                self._progress.mark_range_progress(range_start, range_end, written)
+                                _range_last_saved[rk] = written
+                            except Exception as ex:
+                                logger.warning(
+                                    "Failed to checkpoint range %d-%d at %d bytes: %s",
+                                    range_start,
+                                    range_end,
+                                    written,
+                                    ex,
+                                )
         except Exception as ex:
             logger.error("Writer thread failed: %s", ex)
             self._writer_error = ex
@@ -238,6 +289,29 @@ class GOGDownloader(Downloader):
 
             # Step 1: Resolve URL (follow redirects) and check capabilities
             final_url, file_size, supports_range = self._probe_server(headers)
+
+            # If the probe returned a suspiciously small or zero size, check whether a
+            # previous session recorded a different (presumably correct) size. GOG CDN
+            # signed URLs expire after ~1 hour; an expired URL often redirects to a small
+            # HTML error page that has a tiny or absent Content-Length. Trusting that tiny
+            # size would wipe the partially-downloaded file. Instead, fall back to the
+            # stored progress file's known-good size so the download can continue cleanly
+            # (and fail with a network error, not data loss, if the URL is truly dead).
+            stored_progress = DownloadProgress(self.dest)
+            if stored_progress.load() and stored_progress.file_size > self.MIN_CHUNK_SIZE:
+                if file_size != stored_progress.file_size:
+                    logger.warning(
+                        "GOG probe returned file_size=%d which differs from stored %d bytes; "
+                        "URL may be expired or redirected to an error page — "
+                        "trusting stored size to protect partial download.",
+                        file_size,
+                        stored_progress.file_size,
+                    )
+                    file_size = stored_progress.file_size
+                    # supports_range may be unreliable if probe hit wrong endpoint;
+                    # force parallel path since we know the file is large enough.
+                    supports_range = True
+
             self.full_size = file_size
 
             # Fall back to single-stream if Range not supported or file too small
@@ -253,23 +327,26 @@ class GOGDownloader(Downloader):
             self.progress_event.set()  # Signal that size is known
 
             # Step 2: Check for resumable progress
-            self._progress = DownloadProgress(self.dest)
+            self._progress = stored_progress  # reuse already-loaded progress object
             ranges_to_download = None
 
             if self._progress.load() and self._progress.is_compatible(file_size):
                 remaining = self._progress.get_remaining_ranges()
                 if remaining:
                     already_done = self._progress.get_completed_size()
+                    partial_done = self._progress.get_partial_size()
                     logger.info(
-                        "GOG download: resuming — %d/%d ranges done, %d bytes already on disk, %d bytes remaining",
+                        "GOG download: resuming — %d/%d ranges done, "
+                        "%d bytes complete + %d bytes checkpointed, %d bytes remaining",
                         len(self._progress.completed_ranges),
                         len(self._progress.total_ranges),
                         already_done,
-                        file_size - already_done,
+                        partial_done,
+                        file_size - already_done - partial_done,
                     )
-                    # Credit previously-downloaded bytes to progress tracking
+                    # Credit completed and checkpointed bytes to progress display
                     with self._download_lock:
-                        self.downloaded_size = already_done
+                        self.downloaded_size = already_done + partial_done
                     ranges_to_download = remaining
                 else:
                     # All ranges already complete — verify file exists & size
@@ -285,7 +362,23 @@ class GOGDownloader(Downloader):
 
             # Step 3: Compute ranges (fresh or from progress)
             if ranges_to_download is None:
-                # Fresh download — pre-allocate output file
+                # Guard: refuse to wipe a large existing partial download. This can happen
+                # when the GOG CDN URL expired and the probe returned wrong metadata. Wiping
+                # a 30+ GB file and restarting from zero is never the right choice here.
+                existing_size = os.path.getsize(self.dest) if os.path.isfile(self.dest) else 0
+                if existing_size > self.MIN_CHUNK_SIZE:
+                    raise RuntimeError(
+                        "Refusing to overwrite existing %d-byte partial download "
+                        "(probe returned file_size=%d; stored was %d). "
+                        "The download URL may have expired — please cancel and restart "
+                        "the download to obtain a fresh URL."
+                        % (
+                            existing_size,
+                            file_size,
+                            self._progress.file_size if self._progress._data else 0,
+                        )
+                    )
+                # Genuinely fresh download — pre-allocate output file
                 with open(self.dest, "wb") as f:
                     f.truncate(file_size)
                 all_ranges = self._calculate_ranges(file_size)
@@ -408,10 +501,17 @@ class GOGDownloader(Downloader):
 
         Retries up to RETRY_ATTEMPTS times with exponential backoff.
         """
+        # Check for a mid-range checkpoint from a previous interrupted session.
+        # If bytes_checkpointed > 0, those bytes are already on disk; skip them.
+        bytes_checkpointed = self._progress.get_range_progress(start, end) if self._progress else 0
+
         for attempt in range(self.RETRY_ATTEMPTS):
             try:
                 range_headers = dict(headers)
-                range_headers["Range"] = "bytes=%d-%d" % (start, end)
+                # On first attempt use checkpoint offset; on subsequent retries restart
+                # the range from scratch (the checkpoint may have been from a stale session).
+                resume_from = start + bytes_checkpointed if attempt == 0 else start
+                range_headers["Range"] = "bytes=%d-%d" % (resume_from, end)
 
                 response = self._parallel_session.get(
                     url,
@@ -440,8 +540,8 @@ class GOGDownloader(Downloader):
                 # Normal 206 Partial Content response — enqueue for writer
                 self._reset_stall_state()
                 stream_bytes = 0
-                current_offset = start
-                range_size = end - start + 1
+                current_offset = resume_from
+                range_size = end - resume_from + 1
 
                 for chunk in response.iter_content(chunk_size=self.chunk_size):
                     if self.stop_request and self.stop_request.is_set():
@@ -450,11 +550,8 @@ class GOGDownloader(Downloader):
                         return  # Writer failed, stop downloading
                     if chunk:
                         stream_bytes += len(chunk)
-                        # Mark the last chunk of this range so writer knows when to
-                        # record the range as complete
                         is_last_chunk = stream_bytes >= range_size
-                        range_end_marker = end if is_last_chunk else None
-                        self._write_queue.put((current_offset, chunk, start, range_end_marker))
+                        self._write_queue.put((current_offset, chunk, start, end, is_last_chunk))
                         current_offset += len(chunk)
                         self._check_stall(stream_bytes)
 
@@ -515,7 +612,7 @@ class GOGDownloader(Downloader):
                 data = chunk[slice_start:slice_end]
                 enqueued_bytes += len(data)
                 is_last = enqueued_bytes >= range_size
-                self._write_queue.put((current_offset, data, start, end if is_last else None))
+                self._write_queue.put((current_offset, data, start, end, is_last))
                 current_offset += len(data)
 
             bytes_read += len(chunk)
@@ -525,14 +622,43 @@ class GOGDownloader(Downloader):
     def _single_stream_download(self, url: str, headers: dict) -> None:
         """Fallback single-stream download when Range requests aren't supported.
 
-        Uses the parallel session for connection pooling benefits.
+        Attempts to resume from an existing partial file via a Range header.
+        If the server honours it (206) we append; otherwise we restart.
         """
-        response = self._parallel_session.get(url, headers=headers, stream=True, timeout=30, cookies=self.cookies)
+        existing = os.path.getsize(self.dest) if os.path.isfile(self.dest) else 0
+        req_headers = dict(headers)
+        if existing > 0:
+            req_headers["Range"] = "bytes=%d-" % existing
+
+        response = self._parallel_session.get(url, headers=req_headers, stream=True, timeout=30, cookies=self.cookies)
         response.raise_for_status()
-        self.full_size = int(response.headers.get("Content-Length", "").strip() or 0)
+
+        if response.status_code == 206:
+            content_range = response.headers.get("Content-Range", "")
+            if content_range and "/" in content_range:
+                self.full_size = int(content_range.split("/")[-1])
+            else:
+                self.full_size = existing + int(response.headers.get("Content-Length", "").strip() or 0)
+            self.downloaded_size = existing
+            file_mode = "ab"
+        else:
+            # Server returned 200 (ignored our Range request or URL redirected to error page).
+            # Guard: if a large partial file already exists, refuse to overwrite it — this
+            # would silently replace gigabytes of downloaded data with an HTML error page.
+            if existing > self.MIN_CHUNK_SIZE:
+                response.close()
+                raise RuntimeError(
+                    "Server returned %d instead of 206 for existing %d-byte partial file. "
+                    "The download URL may have expired — please cancel and restart "
+                    "to obtain a fresh URL." % (response.status_code, existing)
+                )
+            self.full_size = int(response.headers.get("Content-Length", "").strip() or 0)
+            self.downloaded_size = 0
+            file_mode = "wb"
+
         self.progress_event.set()
 
-        with open(self.dest, "wb") as f:
+        with open(self.dest, file_mode) as f:
             for chunk in response.iter_content(chunk_size=self.chunk_size):
                 if self.stop_request and self.stop_request.is_set():
                     break

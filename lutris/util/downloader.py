@@ -148,7 +148,16 @@ class Downloader:
         self.last_check_time = get_time()
         if self.overwrite and os.path.isfile(self.dest):
             os.remove(self.dest)
-        self.file_pointer = open(self.dest, "wb")  # pylint: disable=consider-using-with
+        if os.path.isfile(self.dest) and not self.overwrite:
+            existing_size = os.path.getsize(self.dest)
+            if existing_size > 0:
+                logger.info("Resuming download of %s from byte %d", self.dest, existing_size)
+                self.downloaded_size = existing_size
+                self.file_pointer = open(self.dest, "ab")  # pylint: disable=consider-using-with
+            else:
+                self.file_pointer = open(self.dest, "wb")  # pylint: disable=consider-using-with
+        else:
+            self.file_pointer = open(self.dest, "wb")  # pylint: disable=consider-using-with
         self.thread = jobs.AsyncCall(self.async_download, None)
         self.stop_request = self.thread.stop_request
 
@@ -288,13 +297,36 @@ class Downloader:
             for key, value in self.headers.items():
                 headers[key] = value
 
+        resume_from = self.downloaded_size
+        if resume_from > 0:
+            headers["Range"] = "bytes=%d-" % resume_from
+
         # Use provided session for connection pooling, or fall back to plain requests
         requester = self.session if self.session else requests
         response = requester.get(self.url, headers=headers, stream=True, timeout=30, cookies=self.cookies)
-        if response.status_code != 200:
+
+        if response.status_code not in (200, 206):
             logger.info("%s returned a %s error", self.url, response.status_code)
-        response.raise_for_status()
-        self.full_size = int(response.headers.get("Content-Length", "").strip() or 0)
+            response.raise_for_status()
+
+        if response.status_code == 206:
+            # Server honored the Range request — parse total size from Content-Range header
+            content_range = response.headers.get("Content-Range", "")
+            if content_range and "/" in content_range:
+                self.full_size = int(content_range.split("/")[-1])
+            else:
+                remaining = int(response.headers.get("Content-Length", "").strip() or 0)
+                self.full_size = resume_from + remaining
+        else:
+            if resume_from > 0:
+                # Server ignored our Range header — must restart from zero
+                logger.warning("Server does not support range requests, restarting download from beginning")
+                self.downloaded_size = 0
+                if self.file_pointer:
+                    self.file_pointer.close()
+                self.file_pointer = open(self.dest, "wb")  # pylint: disable=consider-using-with
+            self.full_size = int(response.headers.get("Content-Length", "").strip() or 0)
+
         self.progress_event.set()
 
         self._reset_stall_state()
@@ -313,15 +345,17 @@ class Downloader:
             self.progress_event.set()
 
     def _prepare_retry(self):
-        """Prepare state for a retry attempt.
-
-        Resets stall tracking and restarts the file from the beginning.
-        """
+        """Prepare state for a retry attempt, resuming from bytes already on disk."""
         self._reset_stall_state()
-        self.downloaded_size = 0
         if self.file_pointer:
+            self.file_pointer.flush()
             self.file_pointer.close()
-        self.file_pointer = open(self.dest, "wb")  # pylint: disable=consider-using-with
+        if os.path.isfile(self.dest):
+            self.downloaded_size = os.path.getsize(self.dest)
+            self.file_pointer = open(self.dest, "ab")  # pylint: disable=consider-using-with
+        else:
+            self.downloaded_size = 0
+            self.file_pointer = open(self.dest, "wb")  # pylint: disable=consider-using-with
 
     @staticmethod
     def _is_retryable_http_error(error: requests.HTTPError) -> bool:

@@ -129,7 +129,7 @@ class LibrarySyncer:
             "slug": db_game["slug"],
             "runner": db_game["runner"] or "",
             "platform": db_game["platform"] or "",
-            "playtime": "%0.5f" % (db_game["playtime"] or 0),
+            "playtime": "%0.5f" % float(db_game["playtime"] or 0),
             "lastplayed": db_game["lastplayed"] or 0,
             "service": db_game["service"] or "",
             "service_id": db_game["service_id"] or "",
@@ -198,11 +198,11 @@ class LibrarySyncer:
                     if not game:
                         continue
                     changed = False
-                    if remote_game["playtime"] > game.playtime:
-                        game.playtime = remote_game["playtime"]
+                    if float(remote_game["playtime"]) > game.playtime:
+                        game.playtime = float(remote_game["playtime"])
                         changed = True
-                    if remote_game["lastplayed"] > game.lastplayed:
-                        game.lastplayed = remote_game["lastplayed"]
+                    if int(remote_game["lastplayed"]) > game.lastplayed:
+                        game.lastplayed = int(remote_game["lastplayed"])
                         changed = True
                     if set(remote_game["categories"]) != set(game.get_categories()):
                         self._update_categories(game, remote_game)
