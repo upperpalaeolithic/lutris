@@ -78,6 +78,7 @@ class ScriptInterpreter(GObject.Object, CommandsMixin):
         self.game_disc = None
         self.game_files = {}
         self.cancelled = False
+        self._install_saved = False  # True once _finish_install() has saved installed=1
         self.abort_current_task = None
         self.user_inputs = []
         self.current_command = 0  # Current installer command when iterating through them
@@ -373,6 +374,7 @@ class ScriptInterpreter(GObject.Object, CommandsMixin):
 
     def _finish_install(self):
         game_id, game_config = self.installer.save()
+        self._install_saved = True
 
         # Mark cached files as successfully installed so cleanup can remove them
         self._update_cache_locks_state("installed")
@@ -453,6 +455,12 @@ class ScriptInterpreter(GObject.Object, CommandsMixin):
 
                 if self.target_path and remove_game_dir:
                     system.remove_folder(self.target_path)
+
+                # If _finish_install() already saved the game as installed=1,
+                # reset it so the game doesn't appear installed after a cancelled run.
+                if self._install_saved and self.installer.game_id:
+                    from lutris.database.games import add_or_update
+                    add_or_update(id=self.installer.game_id, installed=0)
 
                 completion_function()
             except Exception as ex:
