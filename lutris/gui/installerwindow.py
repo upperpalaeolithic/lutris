@@ -503,7 +503,7 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
 
     def load_destination_page(self):
         """Stage where we select the install directory."""
-        if not self.interpreter.installer.creates_game_folder:
+        if self.installation_kind == InstallationKind.DOWNLOAD or not self.interpreter.installer.creates_game_folder:
             self.on_destination_confirmed()
             return
 
