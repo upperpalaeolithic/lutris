@@ -610,6 +610,9 @@ class GOGService(OnlineService):
                 runner_human_name = get_runner_human_name(installer["runner"])
                 installer["version"] += " " + (runner_human_name or installer["runner"])
 
+        for installer in installers:
+            installer["_generated"] = True
+
         return installers
 
     @staticmethod
