@@ -476,7 +476,10 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
                 application.show_lutris_installer_window(game_slug=ex.slug)
             return
 
-        self.set_title(_("Installing {}").format(self.interpreter.installer.game_name))
+        if self.installation_kind == InstallationKind.DOWNLOAD:
+            self.set_title(_("Downloading {}").format(self.interpreter.installer.game_name))
+        else:
+            self.set_title(_("Installing {}").format(self.interpreter.installer.game_name))
         self.load_destination_page()
 
     def validate_scripts(self, installers):
@@ -541,7 +544,10 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
     def present_destination_page(self):
         """Display the destination chooser."""
 
-        self.set_status(_("Select installation directory"))
+        if self.installation_kind == InstallationKind.DOWNLOAD:
+            self.set_status(_("Select download directory"))
+        else:
+            self.set_status(_("Select installation directory"))
         self.stack.present_page("destination")
         self.display_continue_button(
             self.on_destination_confirmed, extra_buttons=[self.cache_button, self.source_button]
@@ -551,7 +557,8 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
         """Let the interpreter take charge of the next stages."""
 
         self.load_spinner_page(
-            _("Preparing Lutris for installation"),
+            _("Preparing Lutris for download") if self.installation_kind == InstallationKind.DOWNLOAD
+            else _("Preparing Lutris for installation"),
             cancellable=False,
             extra_buttons=[self.cache_button, self.source_button],
         )
