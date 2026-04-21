@@ -1095,11 +1095,18 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
         self.set_status(status)
         self.stack.present_page("nothing")
         if self.installation_kind == InstallationKind.DOWNLOAD:
-            self.display_cancel_button()
+            download_another_button = Gtk.Button(_("Download _another variant"), use_underline=True, visible=True)
+            download_another_button.connect("clicked", self.on_download_another_clicked)
+            self.display_cancel_button(extra_buttons=[download_another_button])
         else:
             self.display_continue_button(
                 self.on_launch_clicked, continue_button_label=_("_Launch"), suggested_action=False
             )
+
+    def on_download_another_clicked(self, _button):
+        """Return to the installer picker to download a different variant."""
+        self.install_complete = False
+        self.stack.navigate_to_page(self.present_choose_installer_page)
 
     def on_launch_clicked(self, button):
         """Launch a game after it's been installed."""
