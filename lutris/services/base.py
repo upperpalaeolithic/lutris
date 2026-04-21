@@ -20,6 +20,7 @@ from lutris.gui.dialogs.webconnect_dialog import WebConnectDialog
 from lutris.gui.views.media_loader import download_media
 from lutris.gui.widgets import NotificationSource
 from lutris.gui.widgets.utils import BANNER_SIZE, ICON_SIZE
+from lutris.installer import InstallationKind
 from lutris.services.service_media import ServiceMedia
 from lutris.util import system
 from lutris.util.busy import BusyAsyncCall
@@ -375,6 +376,27 @@ class BaseService:
         if service_installers and db_game:
             application = Gio.Application.get_default()
             application.show_installer_window(service_installers, service=self, appid=db_game["appid"])
+
+    def download(self, db_game):
+        """Download game files without executing installer commands."""
+        if self.local:
+            return  # local services have nothing to download
+        BusyAsyncCall(self.get_service_installers, self._on_download_installers_loaded, db_game, False)
+
+    def _on_download_installers_loaded(self, result, error):
+        if error:
+            raise error
+        service_installers, db_game, existing_game = result
+        if existing_game:
+            GAME_UPDATED.fire(existing_game)
+        if service_installers and db_game:
+            application = Gio.Application.get_default()
+            application.show_installer_window(
+                service_installers,
+                service=self,
+                appid=db_game["appid"],
+                installation_kind=InstallationKind.DOWNLOAD,
+            )
 
     def simple_install(self, db_game):
         """A simplified version of the install method, used when a game doesn't need any setup"""

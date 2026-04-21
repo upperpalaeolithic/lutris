@@ -119,6 +119,14 @@ class GameActions:
                 raise RuntimeError("No game to install: %s" % game_id)
             game.install(launch_ui_delegate=self.window)
 
+    def on_download_clicked(self, *_args: Any) -> None:
+        """Download game files without installing"""
+        for game in self.get_games():
+            if not game.slug:
+                game_id = game.id if game.is_db_stored else game.name
+                raise RuntimeError("No game to download: %s" % game_id)
+            game.download(launch_ui_delegate=self.window)
+
     def on_add_favorite_game(self, _widget: Gtk.Widget) -> None:
         """Add to favorite Games list"""
         for game in self.get_games():
@@ -270,6 +278,7 @@ class SingleGameActions(GameActions):
             ("unhide", _("Unhide game from library"), self.on_unhide_game),
             (None, "-", None),
             ("install", _("Install"), self.on_install_clicked),
+            ("download", _("Download"), self.on_download_clicked),
             ("install_more", _("Install another version"), self.on_install_clicked),
             ("install_dlcs", _("Install DLCs"), self.on_install_dlc_clicked),
             ("update", _("Install updates"), self.on_update_clicked),
@@ -307,6 +316,7 @@ class SingleGameActions(GameActions):
         return {
             "duplicate": game.is_installed,
             "install": self.is_installable,
+            "download": self.is_installable,
             "add": not game.is_installed,
             "play": self.is_game_launchable,
             "update": game.is_updatable,
