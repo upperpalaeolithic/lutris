@@ -157,6 +157,7 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
         self.installer_files_box = InstallerFilesBox()
         self.installer_files_box.connect("files-available", self.on_files_available)
         self.installer_files_box.connect("files-ready", self.on_files_ready)
+        self._script_checkboxes_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, no_show_all=True)
 
         self.log_buffer = Gtk.TextBuffer()
         self.error_details_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, no_show_all=True)
@@ -755,13 +756,17 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
         self.stack.navigate_to_page(self.present_installer_files_page)
 
     def create_installer_files_page(self):
-        return Gtk.ScrolledWindow(
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0, visible=True)
+        scrolled = Gtk.ScrolledWindow(
             hexpand=True,
             vexpand=True,
             child=self.installer_files_box,
             visible=True,
             shadow_type=Gtk.ShadowType.ETCHED_IN,
         )
+        outer.pack_start(scrolled, True, True, 0)
+        outer.pack_start(self._script_checkboxes_box, False, False, 6)
+        return outer
 
     def present_installer_files_page(self):
         """Show installer screen with the file picker / downloader"""
@@ -773,6 +778,7 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
         self.stack.present_page("installer_files")
         self.display_install_button(self.on_files_confirmed, sensitive=self.installer_files_box.is_ready)
         self._script_save_checkboxes = {}
+        self._script_checkboxes_box.hide()
         if (
             self.installation_kind == InstallationKind.DOWNLOAD
             and self.interpreter
@@ -784,20 +790,13 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
                 self._inject_script_save_checkboxes(community)
 
     def _inject_script_save_checkboxes(self, community_scripts):
-        """Append optional script-save checkboxes to the installer files page.
+        """Populate the script-save checkboxes section below the installer files list.
 
         Only shown in Download mode when offline installer + community scripts coexist.
         Checked scripts are saved as YAML to INSTALLER_CACHE_DIR after download completes.
         """
-        scrolled = self.stack.get_named_page("installer_files")
-        if not scrolled:
-            return
-        existing_child = scrolled.get_child()
-        if not existing_child:
-            return
-
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, visible=True)
-        box.pack_start(existing_child, True, True, 0)
+        for child in self._script_checkboxes_box.get_children():
+            child.destroy()
 
         label = Gtk.Label(
             label=_("<b>Save installer scripts for offline use:</b>"),
@@ -805,17 +804,15 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
             xalign=0,
             visible=True,
         )
-        box.pack_start(label, False, False, 6)
+        self._script_checkboxes_box.pack_start(label, False, False, 0)
 
         self._script_save_checkboxes = {}
         for script in community_scripts:
             cb = Gtk.CheckButton(label=script.get("version", script.get("slug", "")), active=True, visible=True)
             self._script_save_checkboxes[script["slug"]] = (cb, script)
-            box.pack_start(cb, False, False, 0)
+            self._script_checkboxes_box.pack_start(cb, False, False, 0)
 
-        scrolled.remove(existing_child)
-        scrolled.add(box)
-        scrolled.show_all()
+        self._script_checkboxes_box.show()
 
     def present_downloading_files_page(self):
         def on_exit_page():
