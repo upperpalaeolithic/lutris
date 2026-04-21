@@ -555,6 +555,9 @@ class ItchIoService(OnlineService):
                 runner_human_name = get_runner_human_name(installer["runner"])
                 installer["version"] += " " + (runner_human_name or installer["runner"])
 
+        for installer in installers:
+            installer["_generated"] = True
+
         return installers
 
     def _generate_installer(self, runner, db_game: dict[str, Any]) -> dict[str, Any]:
