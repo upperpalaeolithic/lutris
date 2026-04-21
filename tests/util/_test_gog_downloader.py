@@ -793,43 +793,42 @@ class TestResumeFromProgress:
         # Total downloaded = 1000 (already on disk) + 1000 (newly downloaded)
         assert dl.downloaded_size == 2000
 
-    def test_resume_with_incompatible_file_size_starts_fresh(self, tmp_path):
-        """If file size changed, progress is discarded and we start fresh."""
+    def test_resume_with_incompatible_file_size_trusts_stored_size(self, tmp_path):
+        """When server reports a different size, we trust the stored progress size.
+
+        This protects against CDN URL expiry where the server may redirect to a
+        small HTML error page with a bogus Content-Length. Trusting the stored
+        size means the resume can continue (or fail cleanly) rather than silently
+        discarding a large partial download.
+        """
         dest = str(tmp_path / "incompat.bin")
         old_size = 3000
 
         with open(dest, "wb") as f:
             f.truncate(old_size)
 
-        # Create progress with old file size
+        # Create progress with old file size — all ranges already complete
         progress = DownloadProgress(dest)
         progress.create("https://cdn.gog.com/file.bin", old_size, [(0, 2999)])
         progress.mark_range_complete(0, 2999)
 
-        new_size = 4000  # File size changed on server
-        data = b"N" * new_size
+        new_size = 4000  # Server reports a different size (CDN expiry / redirect)
 
         dl = GOGDownloader("https://cdn.gog.com/file.bin", dest, num_workers=2)
         dl.MIN_CHUNK_SIZE = 100
         dl.stop_request = threading.Event()
 
-        def mock_get(url, headers=None, stream=None, timeout=None, cookies=None):
-            resp = MagicMock()
-            rng = headers.get("Range", "")
-            parts = rng.replace("bytes=", "").split("-")
-            start, end = int(parts[0]), int(parts[1])
-            resp.status_code = 206
-            resp.iter_content = MagicMock(return_value=[data[start : end + 1]])
-            return resp
-
         mock_head = self._make_head_resp("https://cdn.gog.com/file.bin", new_size)
 
         with patch.object(dl._parallel_session, "head", return_value=mock_head):
-            with patch.object(dl._parallel_session, "get", side_effect=mock_get):
+            with patch.object(dl._parallel_session, "get") as mock_get:
                 dl.async_download()
 
+        # Since all stored ranges are complete and we trust stored size,
+        # the download completes without fetching any new bytes.
         assert dl.state == dl.COMPLETED
-        assert dl.downloaded_size == new_size
+        # GET should not have been called — progress said all done for stored size
+        mock_get.assert_not_called()
 
     def test_resume_with_missing_dest_starts_fresh(self, tmp_path):
         """If dest file is gone but progress exists, start fresh."""

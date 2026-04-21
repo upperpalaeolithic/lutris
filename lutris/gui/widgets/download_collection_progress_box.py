@@ -131,12 +131,10 @@ class DownloadCollectionProgressBox(Gtk.Box):
         """
         tmp_path = file.dest_file + ".tmp"
         file.tmp_file = tmp_path
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
 
         try:
             downloader_cls = getattr(file, "downloader_class", None) or Downloader
-            dl = downloader_cls(file.url, file.tmp_file, referer=file.referer, overwrite=True)
+            dl = downloader_cls(file.url, file.tmp_file, referer=file.referer, overwrite=False)
         except RuntimeError as ex:
             display_error(ex, parent=self.get_toplevel())
             return None
@@ -316,9 +314,17 @@ class DownloadCollectionProgressBox(Gtk.Box):
 
             if state == ad.downloader.ERROR:
                 if ad.num_retries >= self.max_retries:
-                    # Exhausted retries — fail entire collection
+                    # Exhausted retries — stop all downloads without deleting
+                    # partial files, then re-queue them so the Retry button
+                    # can resume from where each left off.
                     self._set_text(str(ad.downloader.error)[:80])
-                    self._cancel_all()
+                    for failed_ad in self._active_downloads:
+                        if failed_ad.downloader.stop_request:
+                            failed_ad.downloader.stop_request.set()
+                        self._file_queue.insert(0, failed_ad.file)
+                    self._active_downloads.clear()
+                    self.downloader = None
+                    self.cancel_button.set_sensitive(False)
                     self.emit("error", ad.downloader.error)
                     return False
                 # Retry this one download independently
@@ -329,7 +335,6 @@ class DownloadCollectionProgressBox(Gtk.Box):
                     ad.num_retries,
                     self.max_retries,
                 )
-                ad.downloader.reset()
                 ad.downloader = self._create_downloader(ad.file)
                 if ad.downloader is None:
                     self._cancel_all()

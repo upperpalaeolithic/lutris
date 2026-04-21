@@ -316,3 +316,88 @@ class TestEdgeCases:
         assert dp2.get_completed_size() == 200
         remaining = dp2.get_remaining_ranges()
         assert remaining == [(200, 299), (300, 399)]
+
+
+# ------------------------------------------------------------------
+# mark_range_progress / get_range_progress
+# ------------------------------------------------------------------
+
+
+class TestMarkRangeProgress:
+    def test_checkpoint_stored(self, progress):
+        progress.create("https://example.com", 1000, [(0, 499), (500, 999)])
+        progress.mark_range_progress(0, 499, 200)
+        assert progress.get_range_progress(0, 499) == 200
+
+    def test_checkpoint_updated(self, progress):
+        progress.create("https://example.com", 1000, [(0, 499)])
+        progress.mark_range_progress(0, 499, 100)
+        progress.mark_range_progress(0, 499, 300)
+        assert progress.get_range_progress(0, 499) == 300
+
+    def test_zero_bytes_removes_checkpoint(self, progress):
+        progress.create("https://example.com", 1000, [(0, 499)])
+        progress.mark_range_progress(0, 499, 250)
+        progress.mark_range_progress(0, 499, 0)
+        assert progress.get_range_progress(0, 499) == 0
+
+    def test_checkpoint_persists_across_instances(self, progress, tmp_dest):
+        progress.create("https://example.com", 1000, [(0, 499)])
+        progress.mark_range_progress(0, 499, 300)
+
+        fresh = DownloadProgress(tmp_dest)
+        assert fresh.load() is True
+        assert fresh.get_range_progress(0, 499) == 300
+
+    def test_mark_complete_clears_partial_checkpoint(self, progress):
+        progress.create("https://example.com", 1000, [(0, 499)])
+        progress.mark_range_progress(0, 499, 200)
+        progress.mark_range_complete(0, 499)
+        assert progress.get_range_progress(0, 499) == 0
+
+    def test_independent_ranges_tracked_separately(self, progress):
+        progress.create("https://example.com", 1000, [(0, 249), (250, 499), (500, 749), (750, 999)])
+        progress.mark_range_progress(0, 249, 100)
+        progress.mark_range_progress(500, 749, 50)
+        assert progress.get_range_progress(0, 249) == 100
+        assert progress.get_range_progress(250, 499) == 0
+        assert progress.get_range_progress(500, 749) == 50
+        assert progress.get_range_progress(750, 999) == 0
+
+
+# ------------------------------------------------------------------
+# get_partial_size
+# ------------------------------------------------------------------
+
+
+class TestGetPartialSize:
+    def test_zero_when_no_partials(self, progress):
+        progress.create("https://example.com", 1000, [(0, 499), (500, 999)])
+        assert progress.get_partial_size() == 0
+
+    def test_sums_all_partial_checkpoints(self, progress):
+        progress.create("https://example.com", 1000, [(0, 249), (250, 499), (500, 749), (750, 999)])
+        progress.mark_range_progress(0, 249, 100)
+        progress.mark_range_progress(500, 749, 75)
+        assert progress.get_partial_size() == 175
+
+    def test_does_not_include_completed_ranges(self, progress):
+        progress.create("https://example.com", 1000, [(0, 499), (500, 999)])
+        progress.mark_range_complete(0, 499)
+        progress.mark_range_progress(500, 999, 200)
+        assert progress.get_partial_size() == 200
+
+    def test_after_checkpoint_removed(self, progress):
+        progress.create("https://example.com", 1000, [(0, 499)])
+        progress.mark_range_progress(0, 499, 300)
+        progress.mark_range_progress(0, 499, 0)
+        assert progress.get_partial_size() == 0
+
+    def test_persists_across_instances(self, progress, tmp_dest):
+        progress.create("https://example.com", 1000, [(0, 249), (250, 499)])
+        progress.mark_range_progress(0, 249, 120)
+        progress.mark_range_progress(250, 499, 80)
+
+        fresh = DownloadProgress(tmp_dest)
+        assert fresh.load() is True
+        assert fresh.get_partial_size() == 200
