@@ -229,9 +229,14 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
 
         def on_cancelled():
             if self.interpreter:
-                self.interpreter.cleanup()  # still remove temporary downloads in any case
+                # In download mode, skip cleanup when the download completed — the
+                # whole point is to keep those files.  In all other cases (install
+                # mode, or download mode cancelled before completion) run cleanup so
+                # temporary files are removed.
+                if self.installation_kind != InstallationKind.DOWNLOAD or not self.install_complete:
+                    self.interpreter.cleanup()
 
-            if self.interpreter and not self.install_in_progress:
+            if self.install_complete and self.installation_kind != InstallationKind.DOWNLOAD:
                 INSTALLATION_COMPLETED.fire()
             else:
                 INSTALLATION_FAILED.fire()
