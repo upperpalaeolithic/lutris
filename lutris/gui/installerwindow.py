@@ -392,9 +392,37 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
         self.validate_scripts(self.installers)
         self.stack.navigate_to_page(self.present_choose_installer_page)
 
+    @staticmethod
+    def _preferred_runner(installers):
+        """Return 'linux' if the game has both Linux and Wine installers, else None.
+
+        The platform filter and its toggle are only shown when multiple runner
+        types are present — for single-runner games the list is shown as-is.
+        """
+        runners = {s.get("runner") for s in installers}
+        if len(runners) <= 1:
+            return None
+        return "linux" if "linux" in runners else None
+
     def create_choose_installer_page(self):
         installer_picker = InstallerPicker(self.installers)
         installer_picker.connect("installer-selected", self.on_installer_selected)
+
+        preferred = self._preferred_runner(self.installers)
+        if preferred:
+            installer_picker.set_platform_filter(preferred)
+
+            toggle = Gtk.ToggleButton(label=_("Show all platforms"), active=False)
+
+            def on_toggle(btn):
+                installer_picker.set_platform_filter(None if btn.get_active() else preferred)
+
+            toggle.connect("toggled", on_toggle)
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            box.pack_start(toggle, False, False, 0)
+            box.pack_start(installer_picker, True, True, 0)
+            return Gtk.ScrolledWindow(hexpand=True, vexpand=True, child=box, shadow_type=Gtk.ShadowType.ETCHED_IN)
+
         return Gtk.ScrolledWindow(
             hexpand=True, vexpand=True, child=installer_picker, shadow_type=Gtk.ShadowType.ETCHED_IN
         )
