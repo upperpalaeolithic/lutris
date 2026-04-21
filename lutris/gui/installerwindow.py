@@ -729,11 +729,24 @@ class InstallerWindow(ModelessDialog, DialogInstallUIDelegate, ScriptInterpreter
 
         if not self.interpreter.installer.files:
             logger.debug("Installer doesn't require files")
-            self.launch_installer_commands()
+            if self.installation_kind == InstallationKind.DOWNLOAD:
+                GLib.idle_add(
+                    self.load_finish_install_page, None, gtk_safe(_("Game files already downloaded"))
+                )
+            else:
+                self.launch_installer_commands()
             return
 
         logger.debug("Game files prepared.")
         self.installer_files_box.load_installer(self.interpreter.installer)
+
+        if self.installation_kind == InstallationKind.DOWNLOAD and self.installer_files_box.is_ready:
+            logger.debug("All files already present, skipping download")
+            GLib.idle_add(
+                self.load_finish_install_page, None, gtk_safe(_("Game files already downloaded"))
+            )
+            return
+
         self.stack.navigate_to_page(self.present_installer_files_page)
 
     def create_installer_files_page(self):
